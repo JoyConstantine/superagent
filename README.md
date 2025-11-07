@@ -61,10 +61,10 @@ python client.py --help
 
 ```bash
 # 基本查询
-python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -t check_kuaishou_cpu
+python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -t check__cpu
 
 # 查询INFO级别的结果
-python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -t check_kuaishou_cpu -I
+python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -t check__cpu -I
 ```
 
 ### 2. 列出所有任务
@@ -76,25 +76,25 @@ python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -l
 ### 3. 删除任务
 
 ```bash
-python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -d check_kuaishou_cpu
+python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -d check_cpu_use
 ```
 
 ### 4. 下发任务
 
 ```bash
-python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -a check_kuaishou_cpu_5m.sh
+python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -a check_cpu_use_5m.sh
 ```
 
 ### 5. 清除任务记录
 
 ```bash
-python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -c check_kuaishou_cpu
+python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -c check_cpu_use
 ```
 
 ### 6. 显示脚本内容
 
 ```bash
-python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -s check_kuaishou_cpu
+python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -s check__cpu
 ```
 
 ## 脚本规范
@@ -116,7 +116,7 @@ taskname_interval.sh
   - `d`: 天（如 1d）
 
 例如：
-- `check_kuaishou_cpu_5m.sh` - 每5分钟检查一次CPU
+- `check__cpu_5m.sh` - 每5分钟检查一次CPU
 - `check_disk_usage_1h.sh` - 每小时检查一次磁盘使用情况
 
 ### 脚本输出规范
@@ -175,7 +175,7 @@ E|95%
 
 ## 示例脚本
 
-项目提供了一个示例脚本 `check_kuaishou_cpu_5m.sh`，用于每5分钟检查一次CPU使用情况。
+项目提供了一个示例脚本 `check__cpu_5m.sh`，用于每5分钟检查一次CPU使用情况。
 
 - CPU使用率 < 70%: 输出 INFO 级别（I）
 - 70% <= CPU使用率 < 90%: 输出 WARNING 级别（W）
