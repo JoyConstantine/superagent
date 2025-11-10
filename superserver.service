@@ -1,0 +1,18 @@
+[Unit]
+Description=SuperAgent Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/superagent/server
+ExecStart=/usr/bin/python3 /opt/superagent/server/server.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=superserver
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

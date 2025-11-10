@@ -50,6 +50,9 @@ USERS = {
     'viewer': 'vI3#wE2$eR1@'         # 查看员用户
 }
 
+# 用于节点验证的密钥
+NODE_SECRET_KEY = 'superagent_secret_key_2024'  # 生产环境中应该使用更强的密钥并通过环境变量或配置文件管理
+
 # 存储已连接的节点信息
 connected_nodes = {}
 
@@ -184,15 +187,37 @@ async def handle_node(reader, writer):
     """处理节点连接（异步版本）"""
     client_address = writer.get_extra_info('peername')
     node = NodeConnection(reader, writer, client_address)
-    node.node_id = generate_node_id(client_address)
+    node.node_id = None  # 将在验证成功后设置
     
-    # 使用锁保护connected_nodes字典
-    async with connected_nodes_lock:
-        connected_nodes[node.node_id] = node
-    
-    logger.info(f"新的节点连接: {node.node_id} ({client_address[0]}:{client_address[1]})")
+    logger.info(f"新的节点连接尝试: {client_address[0]}:{client_address[1]}")
     
     try:
+        # 等待节点发送认证信息
+        data = await reader.read(4096)
+        if not data:
+            await send_auth_response(writer, False, "连接已关闭")
+            return
+        
+        auth_message = json.loads(data.decode('utf-8'))
+        
+        # 验证节点密钥
+        if auth_message.get('type') != 'auth' or auth_message.get('secret_key') != NODE_SECRET_KEY:
+            await send_auth_response(writer, False, "无效的节点密钥")
+            logger.warning(f"节点 {client_address} 认证失败: 无效密钥")
+            return
+        
+        # 认证成功，生成节点ID
+        node.node_id = generate_node_id(client_address)
+        
+        # 使用锁保护connected_nodes字典
+        async with connected_nodes_lock:
+            connected_nodes[node.node_id] = node
+        
+        logger.info(f"节点 {node.node_id} ({client_address[0]}:{client_address[1]}) 认证成功")
+        
+        # 发送认证成功响应和握手消息
+        await send_auth_response(writer, True, "认证成功")
+        
         # 发送握手消息和节点ID
         handshake_msg = {
             'type': 'handshake',
@@ -250,10 +275,30 @@ async def handle_node(reader, writer):
                 except json.JSONDecodeError as e:
                     logger.error(f"解析节点 {node.node_id} 消息失败: {e}")
     
+    except json.JSONDecodeError:
+        logger.warning(f"节点 {client_address} 发送的验证信息格式错误")
+        await send_auth_response(writer, False, "无效的请求格式")
     except Exception as e:
-        logger.error(f"处理节点 {node.node_id} 连接时出错: {e}")
+        logger.error(f"处理节点 {node.node_id or client_address} 连接时出错: {e}")
     finally:
         await node.close()
+
+async def send_auth_response(writer, success, message):
+    """发送认证响应"""
+    response = {
+        'type': 'auth_response',
+        'success': success,
+        'message': message
+    }
+    try:
+        writer.write((json.dumps(response) + '\n').encode('utf-8'))
+        await writer.drain()
+    except Exception as e:
+        logger.error(f"发送认证响应失败: {e}")
+    finally:
+        if not success and not writer.is_closing():
+            writer.close()
+            await writer.wait_closed()
 
 async def process_task_result(node, message):
     """处理任务执行结果（异步版本）"""

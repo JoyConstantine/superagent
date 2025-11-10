@@ -61,10 +61,10 @@ python client.py --help
 
 ```bash
 # 基本查询
-python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -t check__cpu
+python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -t check_cpu_use
 
 # 查询INFO级别的结果
-python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -t check__cpu -I
+python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -t check_cpu_use -I
 ```
 
 ### 2. 列出所有任务
@@ -94,7 +94,7 @@ python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -c 
 ### 6. 显示脚本内容
 
 ```bash
-python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -s check__cpu
+python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -s check_cpu_use
 ```
 
 ## 脚本规范

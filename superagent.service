@@ -1,0 +1,18 @@
+[Unit]
+Description=SuperAgent Agent
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/superagent/agent
+ExecStart=/usr/bin/python3 /opt/superagent/agent/agent.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=superagent-agent
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

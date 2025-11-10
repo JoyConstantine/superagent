@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-监控系统Agent端
-负责执行服务端下发的脚本并回传执行结果
-"""
+
 
 import asyncio
 import json
 import os
+import socket
 import time
 import threading
 import logging
@@ -16,26 +14,47 @@ import re
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-# 获取主机名
+# 获取脚本所在目录和主机名
+AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 HOSTNAME = socket.gethostname()
 
 # 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename='superagent_agent.log',
-    handlers=[
-        logging.FileHandler('superagent_agent.log'),
-        logging.StreamHandler()
-    ]
-)
+LOG_FILE = os.path.join(AGENT_DIR, 'agent.log')
+
+# 创建日志记录器
 logger = logging.getLogger('superagent-agent')
+logger.setLevel(logging.INFO)
+
+# 清除已有的处理器
+if logger.handlers:
+    logger.handlers.clear()
+
+# 创建格式器
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# 创建文件处理器
+file_handler = logging.FileHandler(LOG_FILE)
+file_handler.setFormatter(formatter)
+file_handler.setLevel(logging.INFO)
+
+# 创建控制台处理器
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+console_handler.setLevel(logging.INFO)
+
+# 添加处理器到记录器
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# 记录启动信息
+logger.info(f"SuperAgent Agent 启动中... 主机名: {HOSTNAME}, 日志文件: {LOG_FILE}")
 
 # 全局配置
 SERVER_HOST = '192.168.123.178'  # 服务端地址
-SERVER_PORT = 4568  # 节点连接端口
-SCRIPT_DIR = '/opt/script/superagent/'  # 脚本存储目录
+SERVER_PORT = 4567  # 节点连接端口
+SCRIPT_DIR = os.path.join(AGENT_DIR, 'scripts')  # 脚本存储目录
 TASKS_FILE = os.path.join(SCRIPT_DIR, '.tasks.json')  # 任务持久化文件
+NODE_SECRET_KEY = 'superagent_secret_key_2024'  # 用于节点验证的密钥，必须与服务端一致
 
 # 节点ID
 NODE_ID = None
@@ -362,7 +381,7 @@ async def setup_task_async(task_name, script_content, interval, writer):
     return True
 
 async def connect_to_server():
-    """异步连接到服务端并保持通信"""
+    """异步连接到服务端并保持通信，包含密钥认证"""
     while True:
         try:
             logger.info(f"尝试连接到服务端: {SERVER_HOST}:{SERVER_PORT}")
@@ -371,9 +390,54 @@ async def connect_to_server():
             reader, writer = await asyncio.open_connection(
                 SERVER_HOST, SERVER_PORT
             )
-            logger.info("成功连接到服务端")
+            logger.info("成功连接到服务端，开始密钥认证")
             
-            # 启动心跳协程
+            # 发送认证信息
+            auth_message = {
+                'type': 'auth',
+                'secret_key': NODE_SECRET_KEY,
+                'hostname': HOSTNAME,
+                'timestamp': time.time()
+            }
+            writer.write((json.dumps(auth_message) + '\n').encode('utf-8'))
+            await writer.drain()
+            
+            # 等待认证响应
+            data = await reader.read(4096)
+            if not data:
+                logger.error("服务端未响应认证请求，连接已关闭")
+                writer.close()
+                await writer.wait_closed()
+                await asyncio.sleep(10)
+                continue
+            
+            # 解析认证响应
+            try:
+                auth_response = json.loads(data.decode('utf-8'))
+                if auth_response.get('type') == 'auth_response':
+                    if auth_response.get('success'):
+                        logger.info("密钥认证成功")
+                    else:
+                        error_msg = auth_response.get('message', '未知错误')
+                        logger.error(f"密钥认证失败: {error_msg}")
+                        writer.close()
+                        await writer.wait_closed()
+                        await asyncio.sleep(10)
+                        continue
+                else:
+                    logger.error("收到非认证响应，断开连接")
+                    writer.close()
+                    await writer.wait_closed()
+                    await asyncio.sleep(10)
+                    continue
+            except json.JSONDecodeError:
+                logger.error("无法解析认证响应")
+                writer.close()
+                await writer.wait_closed()
+                await asyncio.sleep(10)
+                continue
+            
+            # 认证成功，启动心跳协程
             heartbeat_task = asyncio.create_task(send_heartbeat(writer))
             
             # 处理来自服务端的消息
@@ -421,24 +485,42 @@ async def connect_to_server():
 
 async def main_async():
     """异步主函数"""
-    logger.info("SuperAgent Agent 启动")
-    
-    # 创建脚本目录
-    os.makedirs(SCRIPT_DIR, exist_ok=True)
-    
-    # 从本地加载任务
-    # 注意：这里只加载任务信息，实际执行会在连接服务器后启动
-    load_tasks()
-    
-    # 异步连接到服务端
-    await connect_to_server()
+    try:
+        logger.info("SuperAgent Agent 服务启动")
+        
+        # 创建脚本目录
+        try:
+            os.makedirs(SCRIPT_DIR, exist_ok=True)
+            logger.info(f"脚本目录创建/确认成功: {SCRIPT_DIR}")
+        except Exception as e:
+            logger.error(f"创建脚本目录失败: {e}")
+        
+        # 从本地加载任务
+        try:
+            load_tasks()
+            logger.info(f"任务加载完成，当前任务数: {len(all_tasks)}")
+        except Exception as e:
+            logger.error(f"加载任务失败: {e}")
+        
+        # 异步连接到服务端
+        logger.info(f"准备连接到服务端: {SERVER_HOST}:{SERVER_PORT}")
+        await connect_to_server()
+    except KeyboardInterrupt:
+        logger.info("收到中断信号，正在退出...")
+    except Exception as e:
+        logger.error(f"服务运行出错: {e}", exc_info=True)
+    finally:
+        logger.info("SuperAgent Agent 服务已停止")
 
 if __name__ == '__main__':
     # 运行异步主函数
     try:
+        logger.info("程序入口: 开始执行异步主函数")
         asyncio.run(main_async())
     except KeyboardInterrupt:
         logger.info("收到中断信号，正在退出...")
         # 取消所有任务
         for task_name in list(all_tasks.keys()):
             cancel_task(task_name)
+    except Exception as e:
+        logger.critical(f"程序异常退出: {e}", exc_info=True)
