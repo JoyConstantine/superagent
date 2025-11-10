@@ -51,8 +51,8 @@ logger.addHandler(console_handler)
 logger.info(f"SuperAgent Agent 启动中... 主机名: {HOSTNAME}, 日志文件: {LOG_FILE}")
 
 # 全局配置
-SERVER_HOST = '101.43.69.41'  # 服务端地址（根据实际连接地址修改）
-SERVER_PORT = 20258  # 节点连接端口（必须与服务端配置的NODE_PORT一致）
+SERVER_HOST = '192.168.123.101'  # 服务端地址（根据实际连接地址修改）
+SERVER_PORT = 4568  # 节点连接端口（必须与服务端配置的NODE_PORT一致）
 SCRIPT_DIR = os.path.join(AGENT_DIR, 'scripts')  # 脚本存储目录
 TASKS_FILE = os.path.join(SCRIPT_DIR, '.tasks.json')  # 任务持久化文件
 NODE_SECRET_KEY = 'superagent_secret_key_2024'  # 用于节点验证的密钥，必须与服务端一致

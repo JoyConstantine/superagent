@@ -21,8 +21,8 @@ logging.basicConfig(
 logger = logging.getLogger('superagent-client')
 
 # 配置
-SERVER_HOST = '101.43.69.41'
-SERVER_PORT = 20257
+SERVER_HOST = '192.168.123.101'
+SERVER_PORT = 4567
 TIMEOUT = 30
 
 class Client:

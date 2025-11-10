@@ -36,8 +36,8 @@ client_logger.addHandler(client_handler)
 
 # 全局配置
 SERVER_HOST = '0.0.0.0'
-SERVER_PORT = 20257
-NODE_PORT = 20258  # 节点连接端口
+SERVER_PORT = 4567
+NODE_PORT = 4568  # 节点连接端口
 SCRIPT_DIR = '/opt/script/superagent/'
 DATA_DIR = './data'
 HEARTBEAT_TIMEOUT = 60  # 心跳超时时间（秒）

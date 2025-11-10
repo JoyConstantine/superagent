@@ -22,7 +22,7 @@ send_alert_to_feishu() {
 
 check_disk_usage() {
     if ! command -v df &> /dev/null; then
-        echo "E: 未找到df命令，无法检查磁盘使用情况"
+        echo "E| 未找到df命令，无法检查磁盘使用情况"
         send_alert_to_feishu "E" "未找到df命令，无法检查磁盘使用情况"
         return 1
     fi
@@ -41,12 +41,12 @@ check_disk_usage() {
         
         if [ "$mount_point" = "/" ]; then
             if [ "$usage" -ge "$ROOT_WARNING_THRESHOLD" ]; then
-                echo "W: 磁盘 $mount_point 使用率 ${usage}% 超过阈值 ${ROOT_WARNING_THRESHOLD}% 总空间 ${total_space} 可用 ${available_space}"
+                echo "W| 磁盘 $mount_point 使用率 ${usage}% 超过阈值 ${ROOT_WARNING_THRESHOLD}% 总空间 ${total_space} 可用 ${available_space}"
                 send_alert_to_feishu "W" "磁盘 $mount_point 使用率 ${usage}% 超过阈值 ${ROOT_WARNING_THRESHOLD}% 总空间 ${total_space} 可用 ${available_space}"
             fi
         else
             if [ "$usage" -ge "$OTHER_WARNING_THRESHOLD" ]; then
-                echo "W: 磁盘 $mount_point 使用率 ${usage}% 超过阈值 ${OTHER_WARNING_THRESHOLD}% 总空间 ${total_space} 可用 ${available_space}"
+                echo "W| 磁盘 $mount_point 使用率 ${usage}% 超过阈值 ${OTHER_WARNING_THRESHOLD}% 总空间 ${total_space} 可用 ${available_space}"
                 send_alert_to_feishu "W" "磁盘 $mount_point 使用率 ${usage}% 超过阈值 ${OTHER_WARNING_THRESHOLD}% 总空间 ${total_space} 可用 ${available_space}"
             fi
         fi
@@ -55,7 +55,7 @@ check_disk_usage() {
 
 main() {
     if ! command -v curl &> /dev/null; then
-        echo "E: 未找到curl命令，无法发送告警到飞书"
+        echo "E| 未找到curl命令，无法发送告警到飞书"
         exit 1
     fi
     
