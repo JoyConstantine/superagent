@@ -97,6 +97,14 @@ python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -c 
 python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -s check_cpu_use
 ```
 
+### 7. 立即执行任务
+
+```bash
+python client.py 192.168.1.1:4567 --user=admin --passwd=rL1|aB2#oE2!kR4~aC2< -n check_cpu_use
+```
+
+
+
 ## 脚本规范
 
 ### 脚本命名规范
@@ -116,7 +124,7 @@ taskname_interval.sh
   - `d`: 天（如 1d）
 
 例如：
-- `check__cpu_5m.sh` - 每5分钟检查一次CPU
+- `check_cpu_5m.sh` - 每5分钟检查一次CPU
 - `check_disk_usage_1h.sh` - 每小时检查一次磁盘使用情况
 
 ### 脚本输出规范

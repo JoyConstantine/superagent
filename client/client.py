@@ -21,8 +21,8 @@ logging.basicConfig(
 logger = logging.getLogger('superagent-client')
 
 # 配置
-SERVER_HOST = '192.168.123.178'
-SERVER_PORT = 4567
+SERVER_HOST = '101.43.69.41'
+SERVER_PORT = 20257
 TIMEOUT = 30
 
 class Client:
@@ -37,12 +37,14 @@ class Client:
     def connect(self, command):
         """连接到服务端并发送命令"""
         try:
-            # 检查是否为上传脚本命令
+            # 检查是否为上传脚本命令或下发任务命令
             is_upload = command.startswith('-u ')
+            is_add_task = command.startswith('-a ')
             script_path = None
             script_name = None
+            script_content = None
             
-            if is_upload:
+            if is_upload or is_add_task:
                 # 提取脚本路径
                 script_path = command.split(' ', 1)[1]
                 # 获取脚本文件名
@@ -69,13 +71,20 @@ class Client:
                 'command': command
             }
             
-            # 如果是上传脚本，添加脚本内容和名称
-            if is_upload:
+            # 如果是上传脚本或下发任务，添加脚本内容和名称
+            if is_upload or is_add_task:
                 auth_data['script_name'] = script_name
                 auth_data['script_content'] = script_content
             
-            # 发送数据
-            sock.sendall((json.dumps(auth_data) + '\n').encode('utf-8'))
+            # 确保数据可以正确JSON序列化
+            try:
+                json_data = json.dumps(auth_data)
+                # 发送数据
+                sock.sendall((json_data + '\n').encode('utf-8'))
+                logger.info(f"已成功序列化并发送数据，命令: {command}")
+            except Exception as e:
+                logger.error(f"JSON序列化失败: {e}")
+                return {'success': False, 'message': f"构建请求数据失败: {e}"}
             
             # 接收响应
             data = b''
@@ -217,10 +226,10 @@ def parse_server_address(server_str):
             return host, int(port)
         else:
             # 只有主机名，使用默认端口
-            return server_str, DEFAULT_SERVER_PORT
+            return server_str, SERVER_PORT
     except:
         # 解析失败，使用默认值
-        return DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT
+        return SERVER_HOST, SERVER_PORT
 
 def main():
     """主函数"""

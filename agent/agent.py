@@ -13,17 +13,18 @@ import subprocess
 import re
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+import platform  # 用于获取主机名
 
 # 获取脚本所在目录和主机名
 AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
-HOSTNAME = socket.gethostname()
+HOSTNAME = platform.node()  # 使用platform.node()获取更准确的主机名
 
 # 配置日志
 LOG_FILE = os.path.join(AGENT_DIR, 'agent.log')
 
 # 创建日志记录器
 logger = logging.getLogger('superagent-agent')
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)  # 临时设置为DEBUG以获取详细调试信息
 
 # 清除已有的处理器
 if logger.handlers:
@@ -35,12 +36,12 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 # 创建文件处理器
 file_handler = logging.FileHandler(LOG_FILE)
 file_handler.setFormatter(formatter)
-file_handler.setLevel(logging.INFO)
+file_handler.setLevel(logging.DEBUG)  # 设置为DEBUG以记录所有调试信息
 
 # 创建控制台处理器
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(formatter)
-console_handler.setLevel(logging.INFO)
+console_handler.setLevel(logging.DEBUG)  # 设置为DEBUG以显示所有调试信息
 
 # 添加处理器到记录器
 logger.addHandler(file_handler)
@@ -50,14 +51,18 @@ logger.addHandler(console_handler)
 logger.info(f"SuperAgent Agent 启动中... 主机名: {HOSTNAME}, 日志文件: {LOG_FILE}")
 
 # 全局配置
-SERVER_HOST = '192.168.123.178'  # 服务端地址
-SERVER_PORT = 4567  # 节点连接端口
+SERVER_HOST = '101.43.69.41'  # 服务端地址（根据实际连接地址修改）
+SERVER_PORT = 20258  # 节点连接端口（必须与服务端配置的NODE_PORT一致）
 SCRIPT_DIR = os.path.join(AGENT_DIR, 'scripts')  # 脚本存储目录
 TASKS_FILE = os.path.join(SCRIPT_DIR, '.tasks.json')  # 任务持久化文件
 NODE_SECRET_KEY = 'superagent_secret_key_2024'  # 用于节点验证的密钥，必须与服务端一致
 
-# 节点ID
-NODE_ID = None
+# 节点信息
+NODE_ID = None  # 服务端分配的节点ID
+node_info = {  # 节点信息，包含ID和主机名
+    'id': None,
+    'hostname': HOSTNAME
+}
 
 # 存储任务信息
 class Task:
@@ -250,7 +255,7 @@ async def start_task_timer(task, writer):
     asyncio.create_task(run_task())
 
 async def send_task_result(task_name, level, value, writer):
-    """异步发送任务执行结果到服务端"""
+    """异步发送任务执行结果到服务端，包含节点ID和主机名"""
     try:
         message = {
             'type': 'task_result',
@@ -258,24 +263,29 @@ async def send_task_result(task_name, level, value, writer):
             'timestamp': datetime.now().isoformat(),
             'level': level,
             'value': value,
-            'hostname': HOSTNAME  # 添加主机名信息
+            'node_id': node_info['id'],  # 添加节点ID
+            'hostname': node_info['hostname']  # 添加主机名
         }
         
         # 异步发送数据
         writer.write((json.dumps(message) + '\n').encode('utf-8'))
         await writer.drain()
-        logger.info(f"已发送任务 {task_name} 结果: {level} {value}")
+        logger.info(f"已发送任务 {task_name} 结果: {level} {value}, 节点: {node_info['id']}({node_info['hostname']})")
     except Exception as e:
         logger.error(f"发送任务结果失败: {e}")
 
 async def send_heartbeat(writer):
-    """异步定期发送心跳"""
+    """异步定期发送心跳，包含主机名信息"""
     while True:
         try:
-            message = {'type': 'heartbeat', 'timestamp': time.time()}
+            message = {
+                'type': 'heartbeat', 
+                'timestamp': time.time(),
+                'hostname': node_info['hostname']  # 心跳中也携带主机名信息
+            }
             writer.write((json.dumps(message) + '\n').encode('utf-8'))
             await writer.drain()
-            logger.debug("已发送心跳")
+            logger.debug(f"已发送心跳，主机名: {node_info['hostname']}")
         except Exception as e:
             logger.error(f"发送心跳失败: {e}")
             break
@@ -294,6 +304,14 @@ async def handle_server_message(message, writer):
     
     elif msg_type == 'heartbeat_response':
         logger.debug("收到心跳响应")
+    
+    elif msg_type == 'auth_response':
+        # 处理认证响应消息
+        if message.get('success'):
+            logger.info("认证成功")
+        else:
+            error_msg = message.get('message', '未知错误')
+            logger.error(f"认证失败: {error_msg}")
     
     elif msg_type == 'task':
         task_name = message.get('task_name')
@@ -392,48 +410,103 @@ async def connect_to_server():
             )
             logger.info("成功连接到服务端，开始密钥认证")
             
-            # 发送认证信息
+            # 发送认证信息，包含主机名
             auth_message = {
                 'type': 'auth',
                 'secret_key': NODE_SECRET_KEY,
-                'hostname': HOSTNAME,
+                'hostname': HOSTNAME,  # 添加主机名信息
                 'timestamp': time.time()
             }
             writer.write((json.dumps(auth_message) + '\n').encode('utf-8'))
             await writer.drain()
+            logger.debug(f"已发送认证消息，包含主机名: {HOSTNAME}")
             
-            # 等待认证响应
-            data = await reader.read(4096)
-            if not data:
-                logger.error("服务端未响应认证请求，连接已关闭")
-                writer.close()
-                await writer.wait_closed()
-                await asyncio.sleep(10)
-                continue
-            
-            # 解析认证响应
+            # 等待认证响应并处理多个消息
+            auth_success = False
+            buffer = ''
             try:
-                auth_response = json.loads(data.decode('utf-8'))
-                if auth_response.get('type') == 'auth_response':
-                    if auth_response.get('success'):
-                        logger.info("密钥认证成功")
-                    else:
-                        error_msg = auth_response.get('message', '未知错误')
-                        logger.error(f"密钥认证失败: {error_msg}")
-                        writer.close()
-                        await writer.wait_closed()
-                        await asyncio.sleep(10)
-                        continue
-                else:
-                    logger.error("收到非认证响应，断开连接")
+                # 读取初始数据
+                data = await reader.read(4096)
+                if not data:
+                    logger.error("服务端未响应认证请求，连接已关闭")
                     writer.close()
                     await writer.wait_closed()
                     await asyncio.sleep(10)
                     continue
-            except json.JSONDecodeError:
-                logger.error("无法解析认证响应")
-                writer.close()
-                await writer.wait_closed()
+                
+                raw_response = data.decode('utf-8')
+                logger.debug(f"收到认证响应原始数据: {raw_response}")
+                buffer += raw_response
+                
+                # 处理缓冲区内的所有消息
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    try:
+                        message = json.loads(line)
+                        msg_type = message.get('type')
+                        logger.debug(f"处理消息类型: {msg_type}")
+                        
+                        # 处理认证响应
+                        if msg_type == 'auth_response':
+                            if message.get('success'):
+                                logger.info("密钥认证成功")
+                                auth_success = True
+                            else:
+                                error_msg = message.get('message', '未知错误')
+                                logger.error(f"密钥认证失败: {error_msg}")
+                                writer.close()
+                                await writer.wait_closed()
+                                await asyncio.sleep(10)
+                                auth_success = False
+                                break
+                        
+                        # 提前处理握手消息
+                        elif msg_type == 'handshake':
+                            try:
+                                server_node_id = message.get('node_id')
+                                server_hostname = message.get('hostname', HOSTNAME)  # 如果服务端没有返回，则使用本地获取的
+                                
+                                # 使用全局变量更新NODE_ID
+                                global NODE_ID
+                                NODE_ID = server_node_id
+                                
+                                # 更新节点信息字典
+                                node_info['id'] = server_node_id
+                                node_info['hostname'] = server_hostname
+
+                                logger.info(f"收到握手消息，节点ID: {server_node_id}, 主机名: {server_hostname}")
+                                logger.debug(f"节点完整信息: {node_info}")
+                            except Exception as handshake_error:
+                                logger.error(f"处理握手消息时出错: {handshake_error}")
+                        
+                        # 提前处理任务同步消息
+                        elif msg_type == 'tasks_sync':
+                            try:
+                                server_tasks = message.get('tasks', [])
+                                server_task_names = set(server_tasks)
+                                logger.debug(f"收到任务同步信息，服务端任务数: {len(server_task_names)}")
+                            except Exception as sync_error:
+                                logger.error(f"处理任务同步消息时出错: {sync_error}")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"解析单个消息失败: {e}，消息内容: {line}")
+                    except Exception as msg_error:
+                        logger.error(f"处理消息时发生未知错误: {msg_error}")
+                
+                if not auth_success:
+                    logger.warning("认证未成功，重新尝试连接")
+                    continue
+                    
+            except Exception as e:
+                logger.error(f"处理认证响应时出错: {e}")
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except:
+                    pass
                 await asyncio.sleep(10)
                 continue
             
@@ -486,7 +559,7 @@ async def connect_to_server():
 async def main_async():
     """异步主函数"""
     try:
-        logger.info("SuperAgent Agent 服务启动")
+        logger.info(f"SuperAgent Agent 服务启动，主机名: {HOSTNAME}")
         
         # 创建脚本目录
         try:

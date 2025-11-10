@@ -36,8 +36,8 @@ client_logger.addHandler(client_handler)
 
 # 全局配置
 SERVER_HOST = '0.0.0.0'
-SERVER_PORT = 4567
-NODE_PORT = 4568  # 节点连接端口
+SERVER_PORT = 20257
+NODE_PORT = 20258  # 节点连接端口
 SCRIPT_DIR = '/opt/script/superagent/'
 DATA_DIR = './data'
 HEARTBEAT_TIMEOUT = 60  # 心跳超时时间（秒）
@@ -87,7 +87,8 @@ class NodeConnection:
         self.reader = reader
         self.writer = writer
         self.address = client_address
-        self.node_id = None  # 将在握手时设置
+        self.node_id = None  # 服务端生成的唯一标识ID
+        self.hostname = None  # 节点的主机名
         self.last_heartbeat = time.time()
         self.status = 'online'
         
@@ -133,11 +134,12 @@ def authenticate_user(username, password):
         return True
     return False
 
-def generate_node_id(address):
-    """生成节点ID"""
-    # 使用地址和时间生成唯一ID
-    unique_str = f"{address[0]}:{address[1]}:{time.time()}"
-    return hashlib.md5(unique_str.encode()).hexdigest()[:12]
+def generate_node_id(address, hostname):
+    """生成节点ID（基于地址和主机名，更加稳定）"""
+    # 使用IP地址和主机名生成更稳定的ID，减少重复生成可能
+    unique_str = f"{address[0]}:{address[1]}:{hostname}"
+    # 使用hashlib.sha1替代md5以获得更好的唯一性
+    return hashlib.sha1(unique_str.encode()).hexdigest()[:12]
 
 def parse_interval(script_name):
     """从脚本名称解析执行间隔（秒）"""
@@ -206,24 +208,39 @@ async def handle_node(reader, writer):
             logger.warning(f"节点 {client_address} 认证失败: 无效密钥")
             return
         
-        # 认证成功，生成节点ID
-        node.node_id = generate_node_id(client_address)
+        # 获取节点主机名
+        node.hostname = auth_message.get('hostname', 'unknown')
+        
+        # 认证成功，生成节点ID（基于地址和主机名）
+        node.node_id = generate_node_id(client_address, node.hostname)
         
         # 使用锁保护connected_nodes字典
         async with connected_nodes_lock:
+            # 检查是否已存在相同主机名的节点，如果存在则替换
+            for existing_node_id, existing_node in list(connected_nodes.items()):
+                if existing_node.hostname == node.hostname and existing_node_id != node.node_id:
+                    logger.info(f"检测到主机名 {node.hostname} 的节点已存在，替换旧节点连接")
+                    try:
+                        await existing_node.close()
+                    except Exception as e:
+                        logger.error(f"关闭旧节点连接失败: {e}")
+            
+            # 添加新节点
             connected_nodes[node.node_id] = node
         
-        logger.info(f"节点 {node.node_id} ({client_address[0]}:{client_address[1]}) 认证成功")
+        logger.info(f"节点 {node.node_id} ({node.hostname} @ {client_address[0]}:{client_address[1]}) 认证成功")
         
         # 发送认证成功响应和握手消息
         await send_auth_response(writer, True, "认证成功")
         
-        # 发送握手消息和节点ID
+        # 发送握手消息，包含节点ID和主机名信息
         handshake_msg = {
             'type': 'handshake',
-            'node_id': node.node_id
+            'node_id': node.node_id,
+            'hostname': node.hostname
         }
         await node.send_message(handshake_msg)
+        logger.debug(f"已向节点 {node.node_id}({node.hostname}) 发送握手消息")
         
         # 发送所有已存在的任务
         async with tasks_lock:
@@ -267,10 +284,17 @@ async def handle_node(reader, writer):
                     node.last_heartbeat = time.time()
                     
                     if message['type'] == 'heartbeat':
-                        # 响应心跳
-                        await node.send_message({'type': 'heartbeat_response'})
+                        # 响应心跳，包含节点标识信息
+                        await node.send_message({
+                            'type': 'heartbeat_response',
+                            'node_id': node.node_id,
+                            'hostname': node.hostname
+                        })
                     elif message['type'] == 'task_result':
                         # 处理任务执行结果
+                        # 确保结果中包含正确的节点信息
+                        if 'hostname' not in message:
+                            message['hostname'] = node.hostname
                         await process_task_result(node, message)
                 except json.JSONDecodeError as e:
                     logger.error(f"解析节点 {node.node_id} 消息失败: {e}")
@@ -307,11 +331,15 @@ async def process_task_result(node, message):
     level = message.get('level', 'O')
     value = message.get('value', '')
     
+    # 优先使用message中的hostname，如果没有则使用node的hostname，最后才使用node_id
+    hostname = message.get('hostname', node.hostname)
+    
     result_data = {
         'timestamp': timestamp,
         'level': level,
         'value': value,
-        'hostname': message.get('hostname', node.node_id)
+        'hostname': hostname,
+        'node_id': node.node_id  # 同时保存node_id以便后续查询
     }
     
     # 保存结果
@@ -328,7 +356,7 @@ async def process_task_result(node, message):
         asyncio.create_task(batch_save_results())
         last_batch_save_time = current_time
     
-    logger.info(f"收到节点 {node.node_id} 任务 {task_name} 执行结果: {level} {value}")
+    logger.info(f"收到节点 {node.node_id}({node.hostname}) 任务 {task_name} 执行结果: {level} {value}")
 
 async def batch_save_results():
     """批量保存任务结果"""
@@ -400,16 +428,18 @@ async def async_send_to_nodes(message):
     # 创建所有发送任务
     send_tasks = []
     async with connected_nodes_lock:
-        for node_id, node in connected_nodes.items():
-            send_tasks.append((node_id, node.send_message(message)))
+        # 创建一个副本以避免在迭代过程中修改
+        nodes_copy = list(connected_nodes.items())
+        for node_id, node in nodes_copy:
+            send_tasks.append((node_id, node.hostname, node.send_message(message)))
     
     # 并行等待所有发送任务完成
-    for node_id, send_task in send_tasks:
+    for node_id, hostname, send_task in send_tasks:
         try:
             await send_task
             executed_count += 1
         except Exception as e:
-            logger.error(f"向节点 {node_id} 发送消息失败: {e}")
+            logger.error(f"向节点 {node_id}({hostname}) 发送消息失败: {e}")
             failed_count += 1
     
     return executed_count, failed_count
@@ -514,11 +544,19 @@ def handle_client_command(command, username, script_name=None, script_content=No
                 logger.error(f"删除任务文件失败: {e}")
         
         # 通知所有节点删除任务
-        for node_id, node in connected_nodes.items():
-            node.send_message({
-                'type': 'delete_task',
-                'task_name': task_name
-            })
+        delete_msg = {
+            'type': 'delete_task',
+            'task_name': task_name
+        }
+        
+        # 创建一个事件循环来运行异步函数
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            executed_count, failed_count = loop.run_until_complete(async_send_to_nodes(delete_msg))
+            logger.info(f"已向 {executed_count} 个节点发送删除任务消息，失败 {failed_count} 个")
+        finally:
+            loop.close()
         
         return {"success": True, "message": f"任务 {task_name} 已删除"}
     
@@ -526,13 +564,10 @@ def handle_client_command(command, username, script_name=None, script_content=No
         if len(parts) < 2:
             return {"success": False, "message": "缺少脚本名称"}
         
-        # 获取脚本路径
+        # 获取脚本路径或名称
         full_script_path = parts[1]
         # 提取文件名（去掉路径部分）
         script_name = os.path.basename(full_script_path)
-        
-        # 使用原始传入的路径
-        script_path = full_script_path
         
         # 验证脚本名称
         is_valid, error_msg = validate_script_name(script_name)
@@ -542,14 +577,17 @@ def handle_client_command(command, username, script_name=None, script_content=No
         # 解析任务名称（去掉时间后缀）
         task_name = '_'.join(script_name.split('_')[:-1])
         
-        # 读取脚本内容
-        try:
-            with open(script_path, 'r', encoding='utf-8') as f:
-                script_content = f.read()
-        except FileNotFoundError:
-            return {"success": False, "message": f"脚本文件 {script_path} 不存在"}
-        except Exception as e:
-            return {"success": False, "message": f"读取脚本文件失败: {e}"}
+        # 优先使用从客户端接收的脚本内容
+        if script_content is None:
+            # 如果客户端没有提供脚本内容，则尝试在服务器本地读取
+            script_path = full_script_path
+            try:
+                with open(script_path, 'r', encoding='utf-8') as f:
+                    script_content = f.read()
+            except FileNotFoundError:
+                return {"success": False, "message": f"脚本文件 {script_path} 不存在，且客户端未提供脚本内容"}
+            except Exception as e:
+                return {"success": False, "message": f"读取脚本文件失败: {e}"}
         
         # 解析执行间隔
         interval = parse_interval(script_name)
@@ -560,16 +598,23 @@ def handle_client_command(command, username, script_name=None, script_content=No
         all_tasks[task_name] = Task(task_name, script_content, interval)
         
         # 通知所有节点执行任务
-        for node_id, node in connected_nodes.items():
-            # 直接使用原始脚本内容下发，不包含注释信息
-            node.send_message({
-                'type': 'task',
-                'task_name': task_name,
-                'script_content': script_content,
-                'interval': interval
-            })
+        task_msg = {
+            'type': 'task',
+            'task_name': task_name,
+            'script_content': script_content,
+            'interval': interval
+        }
         
-        return {"success": True, "message": f"任务 {task_name} 已下发到所有节点"}
+        # 创建一个事件循环来运行异步函数
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            executed_count, failed_count = loop.run_until_complete(async_send_to_nodes(task_msg))
+            logger.info(f"已向 {executed_count} 个节点发送任务消息，失败 {failed_count} 个")
+        finally:
+            loop.close()
+        
+        return {"success": True, "message": f"脚本 {script_name} 已上传并下发到 {len(connected_nodes)} 个节点"}
     
     elif cmd == '-c':  # 清除任务记录
         if len(parts) < 2:
@@ -861,13 +906,20 @@ async def cleanup_dead_nodes_async():
         dead_nodes = []
         
         async with connected_nodes_lock:
-            for node_id, node in list(connected_nodes.items()):
+            # 先收集所有死亡节点，然后再关闭，避免在迭代过程中修改集合
+            nodes_to_check = list(connected_nodes.items())
+            for node_id, node in nodes_to_check:
                 if current_time - node.last_heartbeat > NODE_TIMEOUT:
-                    dead_nodes.append(node_id)
-                    await node.close()
+                    dead_nodes.append((node_id, node.hostname))
+                    try:
+                        await node.close()
+                    except Exception as e:
+                        logger.error(f"关闭死亡节点 {node_id}({node.hostname}) 时出错: {e}")
             
         if dead_nodes:
-            logger.info(f"清理了 {len(dead_nodes)} 个死亡节点")
+            # 更详细的死亡节点信息日志
+            dead_nodes_info = ", ".join([f"{node_id}({hostname})" for node_id, hostname in dead_nodes])
+            logger.info(f"清理了 {len(dead_nodes)} 个死亡节点: {dead_nodes_info}")
 
 def main():
     """主函数入口"""
