@@ -1,7 +1,7 @@
 #!/bin/bash
 # -*- coding: utf-8 -*-
 
-WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/6f9f6771-ef0a-43c1-8d38-59eb59a52968"
+WEBHOOK_URL="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxxxxxxxx"
 
 
 send_alert_to_feishu() {
